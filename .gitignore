@@ -20,3 +20,5 @@ wandb
 .pexing
 *.tgz
 *.pex
+/.idea/
+.idea

@@ -337,7 +337,7 @@ class KnnService(Resource):
         return to_remove
 
     def knn_search(
-        self, query, modality, num_result_ids, clip_resource, deduplicate, use_safety_model, use_violence_detector
+        self, query, modality, num_result_ids, clip_resource, return_image_ebeddings, deduplicate, use_safety_model, use_violence_detector
     ):
         """compute the knn search"""
 
@@ -372,7 +372,8 @@ class KnnService(Resource):
         result_indices = results[:nb_results]
         result_distances = distances[0][:nb_results]
         result_embeddings = embeddings[0][:nb_results]
-        result_image_embeddings = result_embeddings
+        if return_image_ebeddings:
+           result_image_embeddings = result_embeddings
         result_embeddings = normalized(result_embeddings)
         local_indices_to_remove = self.post_filter(
             clip_resource.safety_model,
@@ -387,16 +388,26 @@ class KnnService(Resource):
             indices_to_remove.add(result_indices[local_index])
         indices = []
         distances = []
-        image_embeddings =[]
-        for ind, distance, image_embedding in zip(result_indices, result_distances, result_image_embeddings):
-            if ind not in indices_to_remove:
-                indices_to_remove.add(ind)
-                indices.append(ind)
-                distances.append(distance)
-                image_embeddings.append(image_embedding)
-        return distances, indices, image_embeddings
+        if return_image_ebeddings:
+            image_embeddings =[]
+            for ind, distance, image_embedding in zip(result_indices, result_distances, result_image_embeddings):
+                if ind not in indices_to_remove:
+                    indices_to_remove.add(ind)
+                    indices.append(ind)
+                    distances.append(distance)
+                    image_embeddings.append(image_embedding)
+            return distances, indices, image_embeddings
+        else:
+            for ind, distance in zip(result_indices, result_distances):
+                if ind not in indices_to_remove:
+                    indices_to_remove.add(ind)
+                    indices.append(ind)
+                    distances.append(distance)
 
-    def map_to_metadata(self, indices, distances, image_embeddings, num_images, metadata_provider, columns_to_return):
+            return distances, indices
+
+
+    def map_to_metadata_with_image_embeddings(self, indices, distances, image_embeddings, num_images, metadata_provider, columns_to_return):
         """map the indices to the metadata"""
 
         results = []
@@ -415,12 +426,31 @@ class KnnService(Resource):
 
         return results
 
+    def map_to_metadata(self, indices, distances, num_images, metadata_provider, columns_to_return):
+        """map the indices to the metadata"""
+
+        results = []
+        with METADATA_GET_TIME.time():
+            metas = metadata_provider.get(indices[:num_images], columns_to_return)
+        for key, (d, i) in enumerate(zip(distances, indices)):
+            output = {}
+            meta = None if key + 1 > len(metas) else metas[key]
+            convert_metadata_to_base64(meta)
+            if meta is not None:
+                output.update(meta_to_dict(meta))
+            output["id"] = i.item()
+            output["similarity"] = d.item()
+            results.append(output)
+
+        return results
+
     def query(
         self,
         text_input=None,
         image_input=None,
         image_url_input=None,
         embedding_input=None,
+        return_image_ebeddings=False,
         modality="image",
         num_images=100,
         num_result_ids=100,
@@ -451,21 +481,46 @@ class KnnService(Resource):
             aesthetic_score=aesthetic_score,
             aesthetic_weight=aesthetic_weight,
         )
-        distances, indices, image_embeddings = self.knn_search(
-            query,
-            modality=modality,
-            num_result_ids=num_result_ids,
-            clip_resource=clip_resource,
-            deduplicate=deduplicate,
-            use_safety_model=use_safety_model,
-            use_violence_detector=use_violence_detector,
-        )
+
+        if return_image_ebeddings:
+            distances, indices, image_embeddings = self.knn_search(
+               query,
+               modality=modality,
+               num_result_ids=num_result_ids,
+               clip_resource=clip_resource,
+               return_image_ebeddings=return_image_ebeddings,
+               deduplicate=deduplicate,
+               use_safety_model=use_safety_model,
+               use_violence_detector=use_violence_detector,
+            )
+        else:
+            distances, indices = self.knn_search(
+                query,
+                modality=modality,
+                num_result_ids=num_result_ids,
+                clip_resource=clip_resource,
+                return_image_ebeddings=return_image_ebeddings,
+                deduplicate=deduplicate,
+                use_safety_model=use_safety_model,
+                use_violence_detector=use_violence_detector,
+            )
+
+
         if len(distances) == 0:
             return []
-        results = self.map_to_metadata(
+        if return_image_ebeddings:
+            results = self.map_to_metadata_with_image_embeddings(
+                indices,
+                distances,
+                image_embeddings,
+                num_images,
+                clip_resource.metadata_provider,
+                clip_resource.columns_to_return,
+            )
+        else:
+            results = self.map_to_metadata(
             indices,
             distances,
-            image_embeddings,
             num_images,
             clip_resource.metadata_provider,
             clip_resource.columns_to_return,

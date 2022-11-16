@@ -22,6 +22,7 @@ class ClipClient:
         url: str,
         indice_name: str,
         use_mclip: bool = False,
+        return_image_ebeddings: bool = False,
         aesthetic_score: int = 9,
         aesthetic_weight: float = 0.5,
         modality: Modality = Modality.IMAGE,
@@ -45,6 +46,7 @@ class ClipClient:
         self.url = url
         self.indice_name = indice_name
         self.use_mclip = use_mclip
+        self.return_image_ebeddings = return_image_ebeddings
         self.aesthetic_score = aesthetic_score
         self.aesthetic_weight = aesthetic_weight
         self.modality = modality.value
@@ -136,6 +138,7 @@ class ClipClient:
                     "image": image,
                     "image_url": image_url,
                     "embedding_input": embedding_input,
+                    "return_image_ebeddings": self.return_image_ebeddings,
                     "deduplicate": self.deduplicate,
                     "use_safety_model": self.use_safety_model,
                     "use_violence_detector": self.use_violence_detector,
